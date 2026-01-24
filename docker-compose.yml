@@ -1,5 +1,3 @@
-version: '3.8'
-
 x-llm-env: &llm-env
   TZ: Asia/Seoul
   # PostgreSQL
@@ -17,6 +15,8 @@ x-llm-env: &llm-env
   PROXY_PASSWORD: ${PROXY_PASSWORD}
   # Kafka
   KAFKA_BOOTSTRAP_SERVERS: broker:29092
+  # Redis
+  REDIS_HOST: ${REDIS_HOST}
 
 services:
   spring-app:
@@ -34,7 +34,8 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
 
       # S3
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      AWS_S3_PRIVATE_BUCKET: ${AWS_S3_PRIVATE_BUCKET}
+      AWS_S3_PUBLIC_BUCKET: ${AWS_S3_PUBLIC_BUCKET}
       AWS_REGION: ${AWS_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
@@ -149,6 +150,30 @@ services:
     networks:
       - app-network
 
+  sse-app:
+    image: hadoroke/channeling-sse:latest
+    container_name: sse-app
+    ports:
+      - "8081:8081"
+    environment:
+      # PostgreSQL
+      PG_HOST: ${PG_HOST}
+      PG_PORT: ${PG_PORT:-5432}
+      PG_DATABASE: ${PG_DATABASE}
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
+    
+
+      # Redis
+      REDIS_HOST: ${REDIS_HOST}
+
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
+
+    networks:
+      - app-network
+    
 networks:
   app-network:
     driver: bridge
+

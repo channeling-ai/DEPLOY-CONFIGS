@@ -1,0 +1,20 @@
+# Environment variables (contains sensitive data)
+.env
+
+# Logs
+logs/
+*.log
+
+# Kafka data
+kafka/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
