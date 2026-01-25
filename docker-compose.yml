@@ -25,6 +25,12 @@ services:
     ports:
       - "8080:8080"
     user: "1000:1000"
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+        max-size: "50m"
+        max-file: "3"
     environment:
       # PostgreSQL
       PG_HOST: ${PG_HOST}
@@ -68,6 +74,12 @@ services:
     container_name: fastapi-app
     ports:
       - "8000:8000"
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+        max-size: "50m"
+        max-file: "3"
     environment:
       <<: *llm-env
     networks:
@@ -86,6 +98,12 @@ services:
     image: hadoroke/channeling-llm:latest
     container_name: overview-consumer
     command: python kafka_overview_consumer.py
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+        max-size: "50m"
+        max-file: "3"
     environment:
       <<: *llm-env
     networks:
@@ -98,6 +116,12 @@ services:
     image: hadoroke/channeling-llm:latest
     container_name: analysis-consumer
     command: python kafka_analysis_consumer.py
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+        max-size: "50m"
+        max-file: "3"
     environment:
       <<: *llm-env
     networks:
@@ -110,6 +134,12 @@ services:
     image: hadoroke/channeling-llm:latest
     container_name: idea-consumer
     command: python kafka_idea_consumer.py
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+        max-size: "50m"
+        max-file: "3"
     environment:
       <<: *llm-env
     networks:
@@ -155,6 +185,12 @@ services:
     container_name: sse-app
     ports:
       - "8081:8081"
+    logging:
+      driver: json-file
+      options:
+        tag: "{{.Name}}"
+        max-size: "50m"
+        max-file: "3"
     environment:
       # PostgreSQL
       PG_HOST: ${PG_HOST}
@@ -185,6 +221,20 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: promtail
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - app-network
+    restart: unless-stopped
+    depends_on:
+      - loki
 
   grafana:
     image: grafana/grafana:10.2.0
