@@ -25,9 +25,15 @@ aws s3 cp s3://channeling-bucket/deploy-configs/.env . || {
   exit 1
 }
 
+aws s3 cp s3://channeling-bucket/deploy-configs/promtail-config.yml . || {
+  echo "❌ Failed to download promtail-config.yml"
+  exit 1
+}
+
 # CRLF를 LF로 변환 (Windows 파일 대비)
 sed -i 's/\r$//' .env
 sed -i 's/\r$//' docker-compose.yml
+sed -i 's/\r$//' promtail-config.yml
 
 # Docker 서비스 시작
 systemctl is-active docker || systemctl start docker
