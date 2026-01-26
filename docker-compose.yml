@@ -54,6 +54,7 @@ services:
       # Others
       JWT_SECRET: ${JWT_SECRET}
       REDIS_HOST: ${REDIS_HOST}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
       SPRING_PROFILES_ACTIVE: "db,s3,oauth,jwt,prod"
       FASTAPI_URL: "http://fastapi-app:8000"
       FRONT_URL: ${FRONT_URL}
@@ -203,6 +204,9 @@ services:
 
       # JWT
       JWT_SECRET: ${JWT_SECRET}
+
+      # Logging
+      SPRING_PROFILES_ACTIVE: prod
 
     networks:
       - app-network
