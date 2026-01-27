@@ -18,6 +18,8 @@ x-llm-env: &llm-env
   KAFKA_BOOTSTRAP_SERVERS: broker:29092
   # Redis
   REDIS_HOST: ${REDIS_HOST}
+  # Discord
+  DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
 
 services:
   spring-app:
