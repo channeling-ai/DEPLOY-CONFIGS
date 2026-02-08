@@ -145,8 +145,8 @@ INSTANCE_IPS=$(aws ec2 describe-instances \
   --query 'Reservations[].Instances[].PrivateIpAddress' \
   --output text | tr '\t' '\n' | sort | tr '\n' ' ')
 
-# 현재 nginx.conf의 upstream IP 목록 추출
-CURRENT_IPS=$(grep -E "server [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" /etc/nginx/nginx.conf | awk '{print $2}' | cut -d: -f1 | sort | tr '\n' ' ')
+# 현재 nginx.conf의 upstream backend IP 목록 추출
+CURRENT_IPS=$(awk '/upstream backend/,/^    }/ {if (/server [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) print $2}' /etc/nginx/nginx.conf | cut -d: -f1 | sort | tr '\n' ' ')
 
 # IP 목록이 변경되었는지 확인
 if [ "$INSTANCE_IPS" = "$CURRENT_IPS" ]; then
@@ -158,46 +158,103 @@ echo "[$(date)] Backend instances changed. Updating nginx config..."
 echo "[$(date)] Current IPs: $CURRENT_IPS"
 echo "[$(date)] New IPs: $INSTANCE_IPS"
 
-# S3에서 최신 템플릿 다운로드 (원본 유지)
-aws s3 cp s3://channeling-bucket/deploy-configs/nginx.conf /tmp/nginx.conf.template 2>/dev/null || {
-  echo "[$(date)] ❌ Failed to download template from S3"
-  exit 1
-}
-
-# upstream 블록 동적 생성
-UPSTREAM_BLOCK="    # Upstream - Spring Boot 서버들 (ASG)\n    upstream backend {\n        least_conn;\n\n"
+# health check 통과한 인스턴스만 필터링
+HEALTHY_IPS=""
+HEALTHY_COUNT=0
 for IP in $INSTANCE_IPS; do
   if [ ! -z "$IP" ]; then
-    UPSTREAM_BLOCK="${UPSTREAM_BLOCK}        server ${IP}:8080 max_fails=3 fail_timeout=30s;\n"
+    if curl -sf --max-time 3 "http://${IP}:8080/actuator/health" > /dev/null 2>&1; then
+      HEALTHY_IPS="${HEALTHY_IPS} ${IP}"
+      HEALTHY_COUNT=$((HEALTHY_COUNT + 1))
+      echo "[$(date)] ✅ Health check passed: ${IP}"
+    else
+      echo "[$(date)] ⏳ Health check failed, skipping: ${IP}"
+    fi
   fi
 done
-UPSTREAM_BLOCK="${UPSTREAM_BLOCK}    }"
 
-# nginx.conf 업데이트
-sed -n '1,25p' /tmp/nginx.conf.template > /tmp/nginx.conf.new
-echo -e "$UPSTREAM_BLOCK" >> /tmp/nginx.conf.new
-sed -n '34,$p' /tmp/nginx.conf.template >> /tmp/nginx.conf.new
+# healthy 인스턴스가 없으면 업데이트 중단
+if [ "$HEALTHY_COUNT" -eq 0 ]; then
+  echo "[$(date)] ❌ No healthy instances found. Keeping current config."
+  exit 0
+fi
 
-# 설정 테스트 (에러 메시지 출력)
+# upstream backend 블록 동적 생성 (8080 포트)
+UPSTREAM_BACKEND="    # Upstream - Spring Boot 서버들 (ASG)\n    upstream backend {\n        least_conn;\n"
+for IP in $HEALTHY_IPS; do
+  if [ ! -z "$IP" ]; then
+    UPSTREAM_BACKEND="${UPSTREAM_BACKEND}        server ${IP}:8080 max_fails=3 fail_timeout=30s;\n"
+  fi
+done
+UPSTREAM_BACKEND="${UPSTREAM_BACKEND}    }"
+
+# upstream sse_backend 블록 동적 생성 (8081 포트)
+UPSTREAM_SSE="    # 새로 추가 — SSE 서버 (8081)\n    upstream sse_backend {\n        least_conn;\n"
+for IP in $HEALTHY_IPS; do
+  if [ ! -z "$IP" ]; then
+    UPSTREAM_SSE="${UPSTREAM_SSE}        server ${IP}:8081 max_fails=3 fail_timeout=30s;\n"
+  fi
+done
+UPSTREAM_SSE="${UPSTREAM_SSE}    }"
+
+# 현재 nginx.conf를 백업
+cp /etc/nginx/nginx.conf /tmp/nginx.conf.backup
+
+# 두 upstream 블록 모두 교체
+awk -v backend="$UPSTREAM_BACKEND" -v sse="$UPSTREAM_SSE" '
+BEGIN { in_backend=0; in_sse=0 }
+
+/# Upstream - Spring Boot/ {
+    print backend
+    in_backend=1
+    next
+}
+
+/# 새로 추가 — SSE/ {
+    print sse
+    in_sse=1
+    next
+}
+
+/^    }/ && in_backend {
+    in_backend=0
+    next
+}
+
+/^    }/ && in_sse {
+    in_sse=0
+    next
+}
+
+!in_backend && !in_sse { print }
+' /etc/nginx/nginx.conf > /tmp/nginx.conf.new
+
+# 설정 테스트
 if nginx -t -c /tmp/nginx.conf.new 2>&1 | tee -a /var/log/nginx-upstream-update.log; then
   mv /tmp/nginx.conf.new /etc/nginx/nginx.conf
   systemctl reload nginx
-  echo "[$(date)] ✅ Nginx reloaded with new backends: ${INSTANCE_IPS}"
+  echo "[$(date)] ✅ Nginx reloaded with new backends (8080) and SSE backends (8081): ${HEALTHY_IPS}"
 else
   echo "[$(date)] ❌ Nginx config test failed"
   echo "[$(date)] Generated config:"
-  cat /tmp/nginx.conf.new | head -40
+  cat /tmp/nginx.conf.new | head -60
   rm /tmp/nginx.conf.new
+  # 백업에서 복구
+  mv /tmp/nginx.conf.backup /etc/nginx/nginx.conf
   exit 1
 fi
+
+# 백업 파일 정리
+rm -f /tmp/nginx.conf.backup
 SCRIPT_END
 
 chmod +x /usr/local/bin/update-nginx-upstream.sh
 
-# Cron 작업 등록 (1분마다 체크)
-echo "* * * * * /usr/local/bin/update-nginx-upstream.sh >> /var/log/nginx-upstream-update.log 2>&1" | crontab -
+# Cron 작업 등록 (30초마다 체크)
+(echo "* * * * * /usr/local/bin/update-nginx-upstream.sh >> /var/log/nginx-upstream-update.log 2>&1"
+echo "* * * * * sleep 30 && /usr/local/bin/update-nginx-upstream.sh >> /var/log/nginx-upstream-update.log 2>&1") | crontab -
 
-echo "✅ Auto-update script configured (runs every minute)"
+echo "✅ Auto-update script configured (runs every 30 seconds)"
 
 # ============================================
 # 6. 상태 확인
