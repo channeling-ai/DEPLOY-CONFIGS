@@ -27,14 +27,27 @@ aws s3 cp s3://channeling-bucket/deploy-configs/nginx.conf /tmp/nginx.conf.templ
   exit 1
 }
 
-# upstream 블록 동적 생성
+# upstream 블록 동적 생성 (health check 통과한 인스턴스만 추가)
 UPSTREAM_BLOCK="    # Upstream - Spring Boot 서버들 (ASG)\n    upstream backend {\n        least_conn;\n\n"
+HEALTHY_COUNT=0
 for IP in $INSTANCE_IPS; do
   if [ ! -z "$IP" ]; then
-    UPSTREAM_BLOCK="${UPSTREAM_BLOCK}        server ${IP}:8080 max_fails=3 fail_timeout=30s;\n"
+    if curl -sf --max-time 3 "http://${IP}:8080/actuator/health" > /dev/null 2>&1; then
+      UPSTREAM_BLOCK="${UPSTREAM_BLOCK}        server ${IP}:8080 max_fails=3 fail_timeout=30s;\n"
+      HEALTHY_COUNT=$((HEALTHY_COUNT + 1))
+      echo "[$(date)] ✅ Health check passed: ${IP}"
+    else
+      echo "[$(date)] ⏳ Health check failed, skipping: ${IP}"
+    fi
   fi
 done
 UPSTREAM_BLOCK="${UPSTREAM_BLOCK}    }"
+
+# healthy 인스턴스가 없으면 업데이트 중단
+if [ "$HEALTHY_COUNT" -eq 0 ]; then
+  echo "[$(date)] ❌ No healthy instances found. Keeping current config."
+  exit 0
+fi
 
 # nginx.conf 업데이트
 sed -n '1,25p' /tmp/nginx.conf.template > /tmp/nginx.conf.new
